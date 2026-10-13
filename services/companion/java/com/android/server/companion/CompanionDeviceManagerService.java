@@ -147,6 +147,8 @@ public class CompanionDeviceManagerService extends SystemService {
         final UserManager userManager = context.getSystemService(UserManager.class);
         final PowerManagerInternal powerManagerInternal = LocalServices.getService(
                 PowerManagerInternal.class);
+        final NotificationManager notificationManager = context.getSystemService(
+                NotificationManager.class);
 
         final AssociationDiskStore associationDiskStore = new AssociationDiskStore();
         mAssociationStore = new AssociationStore(context, userManager, associationDiskStore);
@@ -174,7 +176,8 @@ public class CompanionDeviceManagerService extends SystemService {
 
         mDisassociationProcessor = new DisassociationProcessor(context, activityManager,
                 mAssociationStore, packageManagerInternal, mDevicePresenceProcessor,
-                mCompanionAppBinder, mSystemDataTransferRequestStore, mTransportManager);
+                mCompanionAppBinder, mSystemDataTransferRequestStore, mTransportManager,
+                notificationManager);
 
         mSystemDataTransferProcessor = new SystemDataTransferProcessor(this,
                 packageManagerInternal, mAssociationStore,
@@ -248,8 +251,6 @@ public class CompanionDeviceManagerService extends SystemService {
             for (AssociationInfo association : associationsForPackage) {
                 mDisassociationProcessor.disassociate(association.getId());
             }
-
-            mCompanionAppBinder.onPackageChanged(userId);
         }
 
         // Clear observable UUIDs for the package.
@@ -265,8 +266,6 @@ public class CompanionDeviceManagerService extends SystemService {
                 mAssociationStore.getAssociationsByPackage(userId, packageName);
         if (!associations.isEmpty()) {
             mCompanionExemptionProcessor.exemptPackage(userId, packageName, false);
-
-            mCompanionAppBinder.onPackageChanged(userId);
         }
     }
 
@@ -298,6 +297,21 @@ public class CompanionDeviceManagerService extends SystemService {
                     + "package=u" + userId + "/" + packageName);
             enforceCallerCanManageAssociationsForPackage(getContext(), userId, packageName,
                     "create associations");
+
+            final int callingUid = Binder.getCallingUid();
+            // Foreground check is bypassed if the caller is system, or it is a self-managed
+            // association, or the caller has the privileged MANAGE_COMPANION_DEVICES permission.
+            if (!(callingUid == SYSTEM_UID
+                    || request.isSelfManaged()
+                    || getContext().checkCallingPermission(MANAGE_COMPANION_DEVICES)
+                            == PERMISSION_GRANTED)) {
+                ActivityManagerInternal amInternal = LocalServices.getService(
+                        ActivityManagerInternal.class);
+                int procState = amInternal.getUidProcessState(callingUid);
+                if (procState != ActivityManager.PROCESS_STATE_TOP) {
+                    throw new SecurityException("Caller must be in foreground to associate");
+                }
+            }
 
             mAssociationRequestsProcessor.processNewAssociationRequest(
                     request, packageName, userId, callback);

@@ -73,6 +73,8 @@ import static com.android.server.wm.ActivityTaskManagerInternal.APP_TRANSITION_W
 import static com.android.server.wm.SurfaceAnimator.ANIMATION_TYPE_PREDICT_BACK;
 import static com.android.server.wm.WindowContainer.AnimationFlags.PARENTS;
 import static com.android.server.wm.WindowState.BLAST_TIMEOUT_DURATION;
+import static com.android.server.wm.StartingData.AFTER_TRANSACTION_IDLE;
+import static com.android.server.wm.StartingData.AFTER_TRANSITION_FINISH;
 import static com.android.window.flags.Flags.enableDisplayFocusInShellTransitions;
 
 import android.annotation.IntDef;
@@ -187,6 +189,12 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
     private final Token mToken;
 
     private @Nullable ActivityRecord mPipActivity;
+
+    /**
+     * If this transition has a corresponding RemoteTransition, this tracks the process which will
+     * play the animation.
+     */
+    IApplicationThread mRemoteDelegate = null;
 
     /** Only use for clean-up after binder death! */
     private SurfaceControl.Transaction mStartTransaction = null;
@@ -1377,6 +1385,13 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
                         enterAutoPip = true;
                     }
                 }
+
+                if (ar.mStartingData != null && ar.mStartingData.mRemoveAfterTransaction
+                        == AFTER_TRANSITION_FINISH
+                        && (!ar.isVisible() || !ar.mTransitionController.inTransition(ar))) {
+                    ar.mStartingData.mRemoveAfterTransaction = AFTER_TRANSACTION_IDLE;
+                    ar.removeStartingWindow();
+                }
                 final ChangeInfo changeInfo = mChanges.get(ar);
                 // Due to transient-hide, there may be some activities here which weren't in the
                 // transition.
@@ -1500,10 +1515,20 @@ class Transition implements BLASTSyncEngine.TransactionReadyListener {
         // Update the input-sink (touch-blocking) state now that the animation is finished.
         boolean scheduleAnimation = false;
         for (int i = 0; i < mParticipants.size(); ++i) {
-            final ActivityRecord ar = mParticipants.valueAt(i).asActivityRecord();
-            if (ar == null || !ar.isVisible() || ar.getParent() == null) continue;
-            scheduleAnimation = true;
-            ar.mActivityRecordInputSink.applyChangesToSurfaceIfChanged(ar.getPendingTransaction());
+            final WindowContainer wc = mParticipants.valueAt(i);
+            final ActivityRecord ar = wc.asActivityRecord();
+            if (ar != null && ar.isVisible() && ar.getParent() != null) {
+                scheduleAnimation = true;
+                ar.mActivityRecordInputSink.applyChangesToSurfaceIfChanged(
+                        ar.getPendingTransaction());
+            }
+            final Task task = wc.asTask();
+            if (task != null && task.isVisible() && task.getParent() != null
+                    && task.mTaskInputSink != null) {
+                scheduleAnimation = true;
+                task.mTaskInputSink.applyChangesToSurfaceIfChanged(
+                        task.getPendingTransaction());
+            }
         }
         // To apply pending transactions.
         if (scheduleAnimation) mController.mAtm.mWindowManager.scheduleAnimationLocked();

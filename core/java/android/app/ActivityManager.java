@@ -1765,6 +1765,12 @@ public class ActivityManager {
                 (Build.IS_DEBUGGABLE && DEVELOPMENT_FORCE_LOW_RAM);
     }
 
+    /** @hide */
+    @UnsupportedAppUsage
+    public static boolean isMultiWindowForcedOn() {
+        return RoSystemProperties.CONFIG_FORCE_MULTI_WINDOW;
+    }
+
     /**
      * Returns true if this is a small battery device. Exactly whether a device is considered to be
      * small battery is ultimately up to the device configuration, but currently it generally means
@@ -3536,9 +3542,24 @@ public class ActivityManager {
             Manifest.permission.ACCESS_INSTANT_APPS})
     @UnsupportedAppUsage
     public boolean clearApplicationUserData(String packageName, IPackageDataObserver observer) {
+        return clearApplicationUserData(packageName, observer, true);
+    }
+
+    /**
+     * @hide
+     */
+    @RequiresPermission(anyOf = {Manifest.permission.CLEAR_APP_USER_DATA,
+            Manifest.permission.ACCESS_INSTANT_APPS})
+    private boolean clearApplicationUserData(String packageName, IPackageDataObserver observer,
+            boolean restorePregrantedPermissions) {
         try {
-            return getService().clearApplicationUserData(packageName, false,
-                    observer, mContext.getUserId());
+            if (restorePregrantedPermissions) {
+                return getService().clearApplicationUserData(packageName, false,
+                        observer, mContext.getUserId());
+            } else {
+                return getService().clearApplicationUserDataWithoutPermissionReset(packageName,
+                        false, observer, mContext.getUserId());
+            }
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -3556,7 +3577,7 @@ public class ActivityManager {
      *     data be erased; {@code false} otherwise.
      */
     public boolean clearApplicationUserData() {
-        return clearApplicationUserData(mContext.getPackageName(), null);
+        return clearApplicationUserData(mContext.getPackageName(), null, false);
     }
 
     /**
